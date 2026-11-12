@@ -1,0 +1,4 @@
+.env
+*.log
+docs/base-conhecimento/*
+!docs/base-conhecimento/README.md

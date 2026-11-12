@@ -1,0 +1,307 @@
+{
+  "id": "lissaBase01",
+  "name": "Lissa - Base (Evolution + Gemini)",
+  "nodes": [
+    {
+      "id": "6ca3fb94-b866-4cd5-99fa-a2fb97e1e000",
+      "name": "Webhook Evolution",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        200
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lissa-evolution",
+        "options": {}
+      },
+      "webhookId": "c9045aa8-81ad-4fd8-9fcb-d555e218a24d"
+    },
+    {
+      "id": "328150d0-d83d-4d05-b5f7-5c8cb91818b5",
+      "name": "Extrair Mensagem",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        200
+      ],
+      "parameters": {
+        "jsCode": "const raw = $input.first().json;\nconst b = raw.body || raw;\nconst d = b.data || {};\nconst key = d.key || {};\nconst m = d.message || {};\nconst text = m.conversation || (m.extendedTextMessage && m.extendedTextMessage.text) || '';\nconst jid = key.remoteJid || '';\nconst isGroup = jid.endsWith('@g.us');\nreturn [{ json: {\n  id: key.id || '',\n  jid,\n  phone: jid.split('@')[0],\n  pushName: d.pushName || '',\n  text,\n  fromMe: !!key.fromMe,\n  isGroup,\n  ok: !!text && !key.fromMe && !isGroup,\n  payload: b,\n}}];"
+      }
+    },
+    {
+      "id": "d78c2189-aa70-4bb7-b774-709a809c7c2f",
+      "name": "Mensagem valida?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        440,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "dbf262cc-898f-4bce-82a3-1018e2230762",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "62ce9ac0-a2fc-4fec-9679-3f5e8a688ffd",
+      "name": "Log Mensagem Bruta",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        680,
+        80
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO raw_messages (id, phone, from_me, text, payload) VALUES ($1, $2, $3, $4, $5::jsonb) ON CONFLICT (id) DO NOTHING;",
+        "options": {
+          "queryReplacement": "={{ [ $json.id, $json.phone, $json.fromMe, $json.text, JSON.stringify($json.payload) ] }}"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "id": "bdfa840e-2df1-4c32-a248-773f6677279f",
+      "name": "Buscar Estado",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        680,
+        320
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT current_step, data FROM conversation_state WHERE phone = $1;",
+        "options": {
+          "queryReplacement": "={{ [ $json.phone ] }}"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "81596683-d805-4ccc-bda2-4335521791f9",
+      "name": "Montar Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        320
+      ],
+      "parameters": {
+        "jsCode": "// Referencia explicita aos nos de origem (nao confiar em $json depois de Postgres/HTTP).\nconst msg = $('Extrair Mensagem').first().json;\nconst st = $input.first().json || {};\nconst data = st.data || {};\nconst history = Array.isArray(data.history) ? data.history.slice(-10) : [];\n\nconst SYSTEM_PROMPT = [\n  'Voce e a Lissa, assistente virtual de atendimento no WhatsApp.',\n  'Responda em portugues do Brasil, de forma curta, cordial e objetiva.',\n  'Se nao souber a resposta ou o cliente pedir um humano, diga que vai encaminhar para um atendente.',\n  'Nunca invente prazos, precos ou politicas. (Substitua este prompt pelo da sua empresa.)',\n].join('\n');\n\nconst contents = [\n  ...history.map(h => ({ role: h.role === 'assistant' ? 'model' : 'user', parts: [{ text: h.content }] })),\n  { role: 'user', parts: [{ text: msg.text }] },\n];\n\nreturn [{ json: {\n  history,\n  geminiBody: {\n    systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },\n    contents,\n    generationConfig: { temperature: 0.4, maxOutputTokens: 400 },\n  },\n}}];"
+      }
+    },
+    {
+      "id": "d4cb3588-0596-4aff-bce9-e60e13b1ea76",
+      "name": "Gemini",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        320
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-goog-api-key",
+              "value": "={{ $env.GEMINI_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.geminiBody) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "49a2f071-4a12-4665-8199-211bfb43faca",
+      "name": "Montar Resposta",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        320
+      ],
+      "parameters": {
+        "jsCode": "const msg = $('Extrair Mensagem').first().json;\nconst prev = $('Montar Prompt').first().json.history;\nconst res = $input.first().json || {};\nlet reply = '';\ntry { reply = res.candidates[0].content.parts.map(p => p.text || '').join('').trim(); } catch (e) {}\nconst failed = !reply;\nif (failed) reply = 'Desculpe, tive um problema para responder agora. Ja encaminhei para um atendente.';\nconst history = [...prev, { role: 'user', content: msg.text }, { role: 'assistant', content: reply }].slice(-10);\nreturn [{ json: { phone: msg.phone, reply, failed, history, step: failed ? 'atendimento_humano' : 'llm_conversa' } }];"
+      }
+    },
+    {
+      "id": "b58c1771-c85d-46b7-8807-8245677b20df",
+      "name": "Enviar WhatsApp",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1560,
+        320
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.EVOLUTION_API_URL }}/message/sendText/{{ $env.EVOLUTION_INSTANCE }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.EVOLUTION_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ number: $('Montar Resposta').first().json.phone, text: $('Montar Resposta').first().json.reply }) }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "74105107-d5a4-45a7-ba1e-da51574d86a7",
+      "name": "Salvar Estado",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1780,
+        320
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO conversation_state (phone, current_step, data, updated_at) VALUES ($1, $2, $3::jsonb, now()) ON CONFLICT (phone) DO UPDATE SET current_step = EXCLUDED.current_step, data = EXCLUDED.data, updated_at = now();",
+        "options": {
+          "queryReplacement": "={{ [ $('Montar Resposta').first().json.phone, $('Montar Resposta').first().json.step, JSON.stringify({ history: $('Montar Resposta').first().json.history }) ] }}"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook Evolution": {
+      "main": [
+        [
+          {
+            "node": "Extrair Mensagem",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extrair Mensagem": {
+      "main": [
+        [
+          {
+            "node": "Mensagem valida?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mensagem valida?": {
+      "main": [
+        [
+          {
+            "node": "Log Mensagem Bruta",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Buscar Estado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar Estado": {
+      "main": [
+        [
+          {
+            "node": "Montar Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Montar Prompt": {
+      "main": [
+        [
+          {
+            "node": "Gemini",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini": {
+      "main": [
+        [
+          {
+            "node": "Montar Resposta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Montar Resposta": {
+      "main": [
+        [
+          {
+            "node": "Enviar WhatsApp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar WhatsApp": {
+      "main": [
+        [
+          {
+            "node": "Salvar Estado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}

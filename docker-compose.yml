@@ -23,7 +23,7 @@ services:
     image: n8nio/n8n:latest
     restart: unless-stopped
     ports:
-      - "5679:5678"
+      - "127.0.0.1:5679:5678"
     environment:
       DB_TYPE: postgresdb
       DB_POSTGRESDB_HOST: postgres
@@ -50,7 +50,7 @@ services:
     image: evoapicloud/evolution-api:latest
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     environment:
       SERVER_URL: http://localhost:8080
       AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY:?defina no .env}
@@ -70,7 +70,7 @@ services:
     image: qdrant/qdrant:latest
     restart: unless-stopped
     ports:
-      - "6333:6333"
+      - "127.0.0.1:6333:6333"
     volumes:
       - qdrant_data:/qdrant/storage
 
